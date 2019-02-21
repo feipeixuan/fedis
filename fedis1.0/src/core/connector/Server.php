@@ -4,8 +4,11 @@
  * Author: feipeixuan
  */
 
-
 namespace org\fedis\connector;
+use org\fedis\exception\ConnectionException;
+
+include __DIR__ . "/Message.php";
+include __DIR__ . "/../exception/Exception.php";
 
 class Server
 {
@@ -26,40 +29,48 @@ class Server
     {
         $this->socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
         if (socket_bind($this->socket, "127.0.0.1", 3359) == false) {
-
+            throw new ConnectionException("端口占用导致服务器失败");
         }
         // 监听socket,最大等会数为4
         $ret = socket_listen($this->socket, 2);
         // 设置为非阻塞模式
-        socket_set_block($this->socket);
+        socket_set_nonblock($this->socket);
     }
 
     public function execute()
     {
         // 单线程的模式
         do {
-            $msgsock = socket_accept($this->socket);
-            if (!$msgsock) {
-                //TODO
+            $msgSocket = socket_accept($this->socket);
+            if ($msgSocket) {
+                $this->executeSession($msgSocket);
             }
-            $content = socket_read($msgsock, 4096);
-            if ($content != "start transaction") {
-
-            } else {
-                $tranctionId = 1024;
-                socket_write($msgsock, $tranctionId);
-                // TODO 收到回应
-                do {
-                    $content=socket_read($msgsock,4096);
-                    if(strpos($content,"end tranction") !=false){
-                        echo "222333";
-                        print $content;
-                        break;
-                    }
-                } while (true);
-            }
-
         } while (true);
+    }
+
+    public function executeSession($msgSocket)
+    {
+        $flag = true;
+        do {
+            $startTime = time();
+            while (($clientMessage = socket_read($msgSocket, 4096)) == false) {
+                if ((time() - $startTime) >= 3) {
+                    throw new ConnectionException("连接中断");
+                }
+            }
+            $clientMessage = unserialize($clientMessage);
+            print_r($clientMessage);
+            //开启事务操作
+            if ($clientMessage->content == 'start transaction') {
+                $serverMessage = new Message("", 23);
+                socket_write($msgSocket, serialize($serverMessage));
+            } //关闭事务操作
+            elseif ($clientMessage->commitFlag) {
+                // TODO 执行命令
+                socket_close($msgSocket);
+                return;
+            }
+        } while ($flag);
     }
 }
 

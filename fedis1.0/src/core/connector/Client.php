@@ -8,6 +8,11 @@
 
 namespace org\fedis\connector;
 
+use org\fedis\exception\ConnectionException;
+
+include __DIR__ . "/Message.php";
+include __DIR__ . "/../exception/Exception.php";
+
 
 class Client
 {
@@ -15,46 +20,85 @@ class Client
 
     private $socket;
 
+    private $transactionId;
+
+    private $commandQueue = array();
+
     function __construct()
     {
         $this->socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
-        // 设置为非阻塞模式
-        socket_set_block($this->socket);
     }
 
     // 建立连接
     public function buildConnection()
     {
+        $startTime = time();
         if (socket_connect($this->socket, "127.0.0.1", 3359) == false) {
-
+            if ((time() - $startTime) >= 3) {
+                throw new ConnectionException("连接建立失败");
+            }
         }
+        socket_set_nonblock($this->socket);
     }
 
     // 开启事务
     public function beginTransaction()
     {
-        socket_write($this->socket,"start transaction");
-        while (($data=socket_read($this->socket,1024))==false){
+        $startTime = time();
+        $requestMessage = new Message("start transaction");
+        while ((socket_write($this->socket, serialize($requestMessage))) == false) {
+            if ((time() - $startTime) >= 3) {
+                throw new ConnectionException("连接中断");
+            }
         }
-        print $data;
-        socket_write($this->socket,"end transaction");
-        print ("222");
+        $startTime = time();
+        while (($responseMessage = socket_read($this->socket, 1024)) == false) {
+            if ((time() - $startTime) >= 3) {
+                throw new ConnectionException("连接中断");
+            }
+        }
+        $responseMessage = unserialize($responseMessage);
+        $this->transactionId = $responseMessage->transactionId;
     }
 
     // 提交事务
     public function commit()
     {
-
+        $startTime = time();
+        $requestMessage = new Message($this->commandQueue, $this->transactionId, true);
+        while ((socket_write($this->socket, serialize($requestMessage))) == false) {
+            if ((time() - $startTime) >= 3) {
+                throw new ConnectionException("连接中断");
+            }
+        }
+        print_r($requestMessage);
+        socket_close($this->socket);
     }
 
     // 提交sql命令
-    public function execute($sql)
+    public function execute($command)
     {
-        socket_write($this->socket,$sql);
-        socket_write($this->socket,$sql);
+        if (!isset($this->transactionId)) {
+            $this->beginTransaction();
+            $this->execute($command);
+            $this->commit();
+        } else {
+            $this->enqueueCommand($command);
+        }
+    }
+
+    private function enqueueCommand($command)
+    {
+        array_push($this->commandQueue, $command);
+        echo "入队成功" . "\n";
     }
 }
 
 $instance = new Client();
-$instance->buildConnection();
-$instance->beginTransaction();
+
+try {
+    $instance->buildConnection();
+    $instance->execute("insert");
+} catch (\Exception $exception) {
+
+}
