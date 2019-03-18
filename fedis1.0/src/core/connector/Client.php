@@ -80,7 +80,8 @@ class Client
     {
         if (!isset($this->transactionId)) {
             $this->beginTransaction();
-            $this->execute($command);
+
+
             $this->commit();
         } else {
             $this->enqueueCommand($command);

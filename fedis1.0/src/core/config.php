@@ -1,5 +1,0 @@
-<?php
-/*
- * Description:
- * Author: feipeixuan
- */
